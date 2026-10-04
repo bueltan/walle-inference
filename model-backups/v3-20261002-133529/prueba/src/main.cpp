@@ -1,0 +1,89 @@
+#include <Arduino.h>
+#include <cstring>
+#include "edge-impulse-sdk/classifier/ei_run_classifier.h"
+#include "audio_suite.h"
+
+static_assert(EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE == 16000, "Se requiere ventana de 1 s");
+static_assert(EI_CLASSIFIER_FREQUENCY == 16000, "Se requiere audio de 16 kHz");
+static const CasoAudio *actual = nullptr;
+static constexpr size_t cantidad = sizeof(casos) / sizeof(casos[0]);
+
+// El SDK recibe PCM convertido a float, sin cambiar la escala de amplitud.
+// nullptr representa silencio digital; no se reserva otro buffer en RAM.
+static int leer_audio(size_t offset, size_t length, float *out) {
+    if (!actual || offset > 16000 || length > 16000 - offset) return -1;
+    for (size_t i = 0; i < length; ++i)
+        out[i] = actual->datos ? actual->datos[offset + i] : 0.0f;
+    return 0;
+}
+static void memoria(const char *momento) {
+    Serial.printf("%s: libre=%u, mayor bloque=%u, minimo desde arranque=%u bytes\n",
+                  momento, ESP.getFreeHeap(), ESP.getMaxAllocHeap(), ESP.getMinFreeHeap());
+}
+void setup() {
+    Serial.begin(115200);
+    delay(3000);
+}
+void loop() {
+    unsigned correctas = 0, completadas = 0, errores = 0;
+    unsigned positivas = 0, positivasCorrectas = 0, negativas = 0, falsasActivaciones = 0;
+    double sumaMs = 0;
+    float minimoMs = 1e9f, maximoMs = 0;
+    Serial.printf("\n=== WALL-E BUILD v3 | %s | %u MHz | %u casos ===\n",
+                  ESP.getChipModel(), ESP.getCpuFreqMHz(), static_cast<unsigned>(cantidad));
+    Serial.println("MFCC: 20 filtros, normalizacion 49, stride 0.03 s.");
+    Serial.println("Prueba funcional con audios del proyecto; NO mide precision independiente.");
+    for (size_t n = 0; n < cantidad; ++n) {
+        actual = &casos[n];
+        Serial.printf("\n[%u/%u] %s | esperado=%s\n", static_cast<unsigned>(n+1),
+                      static_cast<unsigned>(cantidad), actual->nombre, actual->esperado);
+        memoria("Antes");
+        signal_t signal;
+        signal.total_length = EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE;
+        signal.get_data = leer_audio;
+        ei_impulse_result_t result = {};
+        uint32_t inicio = micros();
+        EI_IMPULSE_ERROR error = run_classifier(&signal, &result, false);
+        float ms = (micros() - inicio) / 1000.0f;
+        memoria("Despues");
+        if (error != EI_IMPULSE_OK) {
+            ++errores;
+            Serial.printf("ERROR: %d\n", static_cast<int>(error));
+        } else {
+            ++completadas;
+            sumaMs += ms;
+            if (ms < minimoMs) minimoMs = ms;
+            if (ms > maximoMs) maximoMs = ms;
+            Serial.printf("MFCC: %d ms | Red: %d ms | Total medido: %.2f ms\n",
+                          result.timing.dsp, result.timing.classification, ms);
+            size_t best = 0;
+            for (size_t i = 0; i < EI_CLASSIFIER_LABEL_COUNT; ++i) {
+                Serial.printf("%s: %.5f\n", result.classification[i].label, result.classification[i].value);
+                if (result.classification[i].value > result.classification[best].value) best = i;
+            }
+            const char *predicho = result.classification[best].label;
+            bool coincide = strcmp(predicho, actual->esperado) == 0;
+            if (coincide) ++correctas;
+            // Se informa la etiqueta ganadora, sin aplicar umbral de activacion.
+            if (strcmp(actual->esperado, "wall-e") == 0) {
+                ++positivas;
+                if (coincide) ++positivasCorrectas;
+            } else {
+                ++negativas;
+                if (strcmp(predicho, "wall-e") == 0) ++falsasActivaciones;
+            }
+            Serial.printf("Ganadora: %s | %s\n", predicho, coincide ? "COINCIDE" : "NO COINCIDE");
+        }
+        delay(300);
+    }
+    Serial.printf("\n=== RESUMEN v3 ===\nCompletadas: %u/%u | Errores: %u\n",
+                  completadas, static_cast<unsigned>(cantidad), errores);
+    Serial.printf("Coincidencias: %u/%u | Wall-E reconocido: %u/%u\n",
+                  correctas, completadas, positivasCorrectas, positivas);
+    Serial.printf("Wall-E ganador en negativos (incluye silencio): %u/%u\n", falsasActivaciones, negativas);
+    if (completadas) Serial.printf("Tiempo total: promedio %.2f ms | minimo %.2f | maximo %.2f\n",
+                                   sumaMs / completadas, minimoMs, maximoMs);
+    memoria("Fin de ronda");
+    Serial.println("Nueva ronda en 10 s. Copiar una ronda completa para comparar.");
+    delay(10000);
+}

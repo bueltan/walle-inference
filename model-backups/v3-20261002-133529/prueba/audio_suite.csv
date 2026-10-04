@@ -1,0 +1,13 @@
+archivo,label_esperado,origen,muestras_originales,ceros_antes,ceros_despues
+wall-e_006.wav,wall-e,/home/denis/Documents/Wall-e Project/audio-dataset/wall-e-separado/wall-e_006.wav,11840,2080,2080
+wall-e_001.wav,wall-e,/home/denis/Documents/Wall-e Project/audio-dataset/wall-e-separado/wall-e_001.wav,14400,800,800
+wall-e_003.wav,wall-e,/home/denis/Documents/Wall-e Project/audio-dataset/wall-e-separado/wall-e_003.wav,15360,320,320
+wall-e_009.wav,wall-e,/home/denis/Documents/Wall-e Project/audio-dataset/wall-e-separado/wall-e_009.wav,11840,2080,2080
+wall-e_015.wav,wall-e,/home/denis/Documents/Wall-e Project/audio-dataset/wall-e-separado/wall-e_015.wav,14560,720,720
+wall-e_020.wav,wall-e,/home/denis/Documents/Wall-e Project/audio-dataset/wall-e-separado/wall-e_020.wav,15200,400,400
+unknown_004.wav,unknown,/home/denis/Documents/Wall-e Project/audio-dataset/unknown-preparado/resultado/clips/unknown_004.wav,11840,2080,2080
+unknown_006.wav,unknown,/home/denis/Documents/Wall-e Project/audio-dataset/unknown-preparado/resultado/clips/unknown_006.wav,14400,800,800
+unknown_007.wav,unknown,/home/denis/Documents/Wall-e Project/audio-dataset/unknown-preparado/resultado/clips/unknown_007.wav,11520,2240,2240
+unknown_011.wav,unknown,/home/denis/Documents/Wall-e Project/audio-dataset/unknown-preparado/resultado/clips/unknown_011.wav,14240,880,880
+unknown_012.wav,unknown,/home/denis/Documents/Wall-e Project/audio-dataset/unknown-preparado/resultado/clips/unknown_012.wav,11840,2080,2080
+unknown_017.wav,unknown,/home/denis/Documents/Wall-e Project/audio-dataset/unknown-preparado/resultado/clips/unknown_017.wav,13760,1120,1120

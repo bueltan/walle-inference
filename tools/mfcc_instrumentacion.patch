@@ -1,0 +1,103 @@
+--- a/dsp/speechpy/feature.hpp
++++ b/dsp/speechpy/feature.hpp
+@@ -32,6 +32,7 @@
+ #define _EIDSP_SPEECHPY_FEATURE_H_
+ 
+ #include <stdint.h>
++#include "../mfcc_profile.h"
+ #include "../../porting/ei_classifier_porting.h"
+ #include "../ei_utils.h"
+ #include "functions.hpp"
+@@ -221,6 +222,7 @@
+         uint16_t version
+         )
+     {
++        walle_profile::Timer prep_timer(walle_profile::MFE_PREP);
+         int ret = 0;
+ 
+         if (high_frequency == 0) {
+@@ -317,7 +319,13 @@
+         // get signal data from the audio file
+         EI_DSP_MATRIX(signal_frame, 1, stack_frame_info.frame_length);
+ 
++        prep_timer.stop();
+         for (size_t ix = 0; ix < stack_frame_info.frame_ixs.size(); ix++) {
++#if WALLE_PROFILE_MFCC
++            ++walle_profile::stats().frames;
++#endif
++            // Incluye lectura desde flash y preénfasis aplicado por get_data.
++            walle_profile::Timer read_timer(walle_profile::READ);
+             // don't read outside of the audio buffer... we'll automatically zero pad then
+             size_t signal_offset = stack_frame_info.frame_ixs.at(ix);
+             size_t signal_length = stack_frame_info.frame_length;
+@@ -335,6 +343,9 @@
+                 EIDSP_ERR(ret);
+             }
+ 
++            read_timer.stop();
++            // FFT y conversión a espectro de potencia, sumadas para todos los frames.
++            walle_profile::Timer fft_timer(walle_profile::FFT);
+             ret = numpy::power_spectrum(
+                 signal_frame.buffer,
+                 stack_frame_info.frame_length,
+@@ -347,6 +358,8 @@
+                 EIDSP_ERR(ret);
+             }
+ 
++            fft_timer.stop();
++            walle_profile::Timer mel_timer(walle_profile::MEL);
+             float energy = numpy::sum(power_spectrum_frame.buffer, power_spectrum_frame_size);
+             if (energy == 0) {
+                 energy = 1e-10;
+@@ -757,17 +770,22 @@
+ 
+         // ok... now we need to calculate the MFCC from this...
+         // first do log() over all features...
++        walle_profile::Timer log_timer(walle_profile::LOG);
+         ret = numpy::log(&features_matrix);
++        log_timer.stop();
+         if (ret != EIDSP_OK) {
+             EIDSP_ERR(ret);
+         }
+ 
+         // now do DST type 2
++        walle_profile::Timer dct_timer(walle_profile::DCT);
+         ret = numpy::dct2(&features_matrix, DCT_NORMALIZATION_ORTHO);
++        dct_timer.stop();
+         if (ret != EIDSP_OK) {
+             EIDSP_ERR(ret);
+         }
+ 
++        walle_profile::Timer copy_timer(walle_profile::COPY);
+         // replace first cepstral coefficient with log of frame energy for DC elimination
+         if (dc_elimination) {
+             for (size_t row = 0; row < features_matrix.rows; row++) {
+--- a/classifier/ei_run_dsp.h
++++ b/classifier/ei_run_dsp.h
+@@ -224,6 +224,8 @@
+ }
+ 
+ __attribute__((unused)) int extract_mfcc_features(signal_t *signal, matrix_t *output_matrix, void *config_ptr, const float sampling_frequency) {
++    walle_profile::Timer total_timer(walle_profile::TOTAL);
++    walle_profile::Timer prep_timer(walle_profile::PREP);
+     ei_dsp_config_mfcc_t config = *((ei_dsp_config_mfcc_t*)config_ptr);
+ 
+     if (config.axes != 1) {
+@@ -262,6 +264,7 @@
+     output_matrix->rows = out_matrix_size.rows;
+     output_matrix->cols = out_matrix_size.cols;
+ 
++    prep_timer.stop();
+     // and run the MFCC extraction
+     int ret = speechpy::feature::mfcc(output_matrix, &preemphasized_audio_signal,
+         frequency, config.frame_length, config.frame_stride, config.num_cepstral, config.num_filters, config.fft_length,
+@@ -272,7 +275,9 @@
+     }
+ 
+     // cepstral mean and variance normalization
++    walle_profile::Timer norm_timer(walle_profile::NORM);
+     ret = speechpy::processing::cmvnw(output_matrix, config.win_size, true, false);
++    norm_timer.stop();
+     if (ret != EIDSP_OK) {
+         ei_printf("ERR: cmvnw failed (%d)\n", ret);
+         EIDSP_ERR(ret);

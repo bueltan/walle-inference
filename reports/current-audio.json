@@ -1,0 +1,13 @@
+{
+  "source": "/home/denis/Documents/Wall-e Project/audio-dataset/oct4_test_continue.740o0f6n.wav",
+  "part": 1,
+  "ranges_seconds": [
+    [
+      0,
+      64
+    ]
+  ],
+  "duration": 64.0,
+  "pcm_sha256": "cf2bff3dd1a0e60f596bf74e093404c082e79ad5407e75fbf7405b392de70dfb",
+  "original_sha256": "8d447218e33ebd8405d7d77ac8d3c38edd0f5b50f5316862044243d4c6d4736a"
+}

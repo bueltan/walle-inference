@@ -1,0 +1,108 @@
+{
+  "header": "=== WALL-E v12 | AUDIOS COMPLETOS | ESP32-C3 | 160 MHz | 13 casos ===",
+  "complete_rounds": 1,
+  "summary": [
+    "=== RESUMEN v12 ===",
+    "Completadas: 13/13 | Errores: 0",
+    "Coincidencias: 13/13 | Wall-E reconocido: 7/7",
+    "Wall-E ganador en negativos: 0/6",
+    "Con umbral 0.80: Wall-E=7/7 | negativos activados=0/6",
+    "Tiempo total: promedio 342.72 ms | minimo 342.36 | maximo 343.00",
+    "Fin de ronda: libre=307460, mayor bloque=278516, minimo desde arranque=294936 bytes",
+    "Nueva ronda en 10 s. Copiar una ronda completa para comparar."
+  ],
+  "scores": [
+    {
+      "case": 1,
+      "name": "01_walle_walle_evento01.wav | esperado=walle",
+      "walle": 0.99609,
+      "activated": true,
+      "omitted": false
+    },
+    {
+      "case": 2,
+      "name": "02_walle_walle_evento02.wav | esperado=walle",
+      "walle": 0.99609,
+      "activated": true,
+      "omitted": false
+    },
+    {
+      "case": 3,
+      "name": "03_walle_walle_evento03.wav | esperado=walle",
+      "walle": 0.97656,
+      "activated": true,
+      "omitted": false
+    },
+    {
+      "case": 4,
+      "name": "04_unknown_hola_evento04.wav | esperado=unknown",
+      "walle": 0.32031,
+      "activated": false,
+      "omitted": false
+    },
+    {
+      "case": 5,
+      "name": "05_unknown_mesa_evento05.wav | esperado=unknown",
+      "walle": 0.0,
+      "activated": false,
+      "omitted": false
+    },
+    {
+      "case": 6,
+      "name": "06_unknown_vamos_evento06.wav | esperado=unknown",
+      "walle": 0.0,
+      "activated": false,
+      "omitted": false
+    },
+    {
+      "case": 7,
+      "name": "07_walle_walle_evento09.wav | esperado=walle",
+      "walle": 0.98438,
+      "activated": true,
+      "omitted": false
+    },
+    {
+      "case": 8,
+      "name": "08_walle_walle_evento10.wav | esperado=walle",
+      "walle": 0.94141,
+      "activated": true,
+      "omitted": false
+    },
+    {
+      "case": 9,
+      "name": "09_unknown_vale_evento11.wav | esperado=unknown",
+      "walle": 0.13281,
+      "activated": false,
+      "omitted": false
+    },
+    {
+      "case": 10,
+      "name": "10_unknown_walter_evento12.wav | esperado=unknown",
+      "walle": 0.04688,
+      "activated": false,
+      "omitted": false
+    },
+    {
+      "case": 11,
+      "name": "11_unknown_agua_evento13.wav | esperado=unknown",
+      "walle": 0.0,
+      "activated": false,
+      "omitted": false
+    },
+    {
+      "case": 12,
+      "name": "12_walle_walle_evento14.wav | esperado=walle",
+      "walle": 0.98047,
+      "activated": true,
+      "omitted": false
+    },
+    {
+      "case": 13,
+      "name": "13_walle_walle_evento15.wav | esperado=walle",
+      "walle": 0.97656,
+      "activated": true,
+      "omitted": false
+    }
+  ],
+  "note": "En stream comparar eventos con el orden conocido; omitido no equivale a acierto."
+}

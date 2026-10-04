@@ -1,0 +1,19 @@
+{
+  "version": 12,
+  "previous_version": 11,
+  "backup": "/home/denis/Documents/Wall-e Project/wall-e-inferencia/model-backups/v11-antes-v12-20261004-142359-881393",
+  "sdk": "parche exacto verificado",
+  "installed": true,
+  "export": "/home/denis/Downloads/wall-e-cpp-mcu-v12-impulse-#1",
+  "model_hashes": {
+    "tflite_learn_1124860_5_compiled.cpp": "023c205c8d5d1472496cff118ea6e0142cd3555aae749ecdd326fb67b8a9d449",
+    "tflite_learn_1124860_5_compiled.h": "0fc6033ec079603d9c76278d38a0edc2dde067e3e22d15fc35ed20639c4b0daa",
+    "trained_model_ops_define.h": "d5fdddc7c25d9b733c23708d3717ac68fdcc2846dc845c868f4227c7c848a00d"
+  },
+  "metrics": "/home/denis/Documents/Wall-e Project/wall-e-inferencia/reports/v12-metrics.json",
+  "build": {
+    "environment": "esp32-c3-clips",
+    "status": "SUCCESS",
+    "log": "/home/denis/Documents/Wall-e Project/wall-e-inferencia/reports/build-esp32-c3-clips.log"
+  }
+}

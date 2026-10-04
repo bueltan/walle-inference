@@ -1,0 +1,618 @@
+--- a/edge-impulse-sdk/classifier/ei_run_dsp.h
++++ b/edge-impulse-sdk/classifier/ei_run_dsp.h
+@@ -224,6 +224,8 @@
+ }
+ 
+ __attribute__((unused)) int extract_mfcc_features(signal_t *signal, matrix_t *output_matrix, void *config_ptr, const float sampling_frequency) {
++    walle_profile::Timer total_timer(walle_profile::TOTAL);
++    walle_profile::Timer prep_timer(walle_profile::PREP);
+     ei_dsp_config_mfcc_t config = *((ei_dsp_config_mfcc_t*)config_ptr);
+ 
+     if (config.axes != 1) {
+@@ -262,6 +264,7 @@
+     output_matrix->rows = out_matrix_size.rows;
+     output_matrix->cols = out_matrix_size.cols;
+ 
++    prep_timer.stop();
+     // and run the MFCC extraction
+     int ret = speechpy::feature::mfcc(output_matrix, &preemphasized_audio_signal,
+         frequency, config.frame_length, config.frame_stride, config.num_cepstral, config.num_filters, config.fft_length,
+@@ -272,7 +275,9 @@
+     }
+ 
+     // cepstral mean and variance normalization
++    walle_profile::Timer norm_timer(walle_profile::NORM);
+     ret = speechpy::processing::cmvnw(output_matrix, config.win_size, true, false);
++    norm_timer.stop();
+     if (ret != EIDSP_OK) {
+         ei_printf("ERR: cmvnw failed (%d)\n", ret);
+         EIDSP_ERR(ret);
+--- /dev/null
++++ b/edge-impulse-sdk/dsp/mfcc_profile.h
+@@ -0,0 +1,39 @@
++#pragma once
++#include <stdint.h>
++#include "../porting/ei_classifier_porting.h"
++
++// Instrumentación local de Wall-E. No modifica el audio ni los cálculos.
++// Acumula microsegundos por etapa; se imprime DESPUÉS de la inferencia.
++#ifndef WALLE_PROFILE_MFCC
++#define WALLE_PROFILE_MFCC 1
++#endif
++#ifndef WALLE_VERIFY_MEL
++#define WALLE_VERIFY_MEL 1
++#endif
++namespace walle_profile {
++enum Stage { TOTAL, PREP, MFE_PREP, READ, FFT, MEL, LOG, DCT, COPY, NORM, MAIN_COUNT, FFT_BUFFER = MAIN_COUNT, FFT_PLAN, FFT_EXEC, FFT_FREE, FFT_MAG, FFT_POWER, FFT_END, CMVN_PREP = FFT_END, CMVN_PAD1, CMVN_MEAN, CMVN_SUB, CMVN_PAD2, CMVN_STD, CMVN_DIV, CMVN_SCALE, CMVN_END, STD_MEAN = CMVN_END, STD_SUMSQ, STD_SQRT, COUNT };
++struct Stats { uint32_t mel_verified_frames = 0; uint32_t mel_different_frames = 0; uint32_t mel_verify_us = 0; uint64_t us[COUNT] = {}; uint32_t dct_verify_us = 0; bool dct_verified = false; bool dct_equal = false; uint32_t frames = 0; uint32_t fft_calls = 0; uint32_t plans_built = 0; bool in_power = false; bool in_cmvn = false; };
++inline Stats &stats() { static Stats value; return value; }
++inline void reset() { stats() = Stats{}; }
++// El reloj del port Arduino usa micros(). La resta uint32_t soporta su wrap.
++inline uint32_t now() { return static_cast<uint32_t>(ei_read_timer_us()); }
++class Timer {
++public:
++    explicit Timer(Stage stage) : stage_(stage) {
++        active_ = stage < MAIN_COUNT || (stage < FFT_END ? stats().in_power : stats().in_cmvn);
++#if WALLE_PROFILE_MFCC
++        if (active_) start_ = now();
++#endif
++    }
++    void stop() {
++#if WALLE_PROFILE_MFCC
++        if (active_) { stats().us[stage_] += static_cast<uint32_t>(now()-start_); active_ = false; }
++#endif
++    }
++    ~Timer() { stop(); } // También cierra la medición ante un retorno por error.
++private:
++    Stage stage_;
++    uint32_t start_ = 0;
++    bool active_ = true;
++};
++}
+--- a/edge-impulse-sdk/dsp/numpy.hpp
++++ b/edge-impulse-sdk/dsp/numpy.hpp
+@@ -1,3 +1,7 @@
++#ifndef WALLE_VERIFY_DCT
++#define WALLE_VERIFY_DCT 1
++#endif
++#include "mfcc_profile.h"
+ /* The Clear BSD License
+  *
+  * Copyright (c) 2025 EdgeImpulse Inc.
+@@ -136,6 +140,18 @@
+ 
+ class numpy {
+ public:
++    // Plan local a un analisis MFE. Contiene tablas y espacio de trabajo KISS.
++    // No se comparte entre inferencias: al salir de MFE se libera incluso con error.
++    struct ReusableFFTPlan {
++        kiss_fftr_cfg cfg = nullptr;
++        size_t points = 0;
++        size_t bytes = 0;
++        ReusableFFTPlan() = default;
++        ReusableFFTPlan(const ReusableFFTPlan&) = delete;
++        ReusableFFTPlan& operator=(const ReusableFFTPlan&) = delete;
++        ~ReusableFFTPlan() { if (cfg) ei_dsp_free(cfg, bytes); }
++    };
++
+ 
+     static float sqrt(float x) {
+ #if EIDSP_USE_HW_MATH
+@@ -521,7 +537,14 @@
+         return EIDSP_OK;
+     }
+ 
+-    static int dct_transform(float vector[], size_t len)
++    // Mantener el tipo exacto de las funciones originales: no reducir a float.
++    struct DCTRotation {
++        decltype(cos(0.0f)) cosine;
++        decltype(sin(0.0f)) sine;
++    };
++
++    static int dct_transform(float vector[], size_t len, ReusableFFTPlan *plan = nullptr,
++        const DCTRotation *rotations = nullptr)
+     {
+         const size_t fft_data_out_size = (len / 2 + 1) * sizeof(ei::fft_complex_t);
+         const size_t fft_data_in_size = len * sizeof(float);
+@@ -549,7 +572,7 @@
+             fft_data_in[halfLen] = vector[len - 1];
+         }
+ 
+-        int r = ei::numpy::rfft(fft_data_in, len, fft_data_out, (len / 2 + 1), len);
++        int r = ei::numpy::rfft(fft_data_in, len, fft_data_out, (len / 2 + 1), len, plan);
+         if (r != 0) {
+             ei_dsp_free(fft_data_in, fft_data_in_size);
+             ei_dsp_free(fft_data_out, fft_data_out_size);
+@@ -559,14 +582,14 @@
+         size_t i = 0;
+         for (; i < len / 2 + 1; i++) {
+             float temp = i * M_PI / (len * 2);
+-            vector[i] = fft_data_out[i].r * cos(temp) + fft_data_out[i].i * sin(temp);
++            vector[i] = fft_data_out[i].r * (rotations ? rotations[i].cosine : cos(temp)) + fft_data_out[i].i * (rotations ? rotations[i].sine : sin(temp));
+         }
+         //take advantage of hermetian symmetry to calculate remainder of signal
+         for (; i < len; i++) {
+             float temp = i * M_PI / (len * 2);
+             int conj_idx = len-i;
+             // second half bins not calculated would have just been the conjugate of the first half (note minus of imag)
+-            vector[i] = fft_data_out[conj_idx].r * cos(temp) - fft_data_out[conj_idx].i * sin(temp);
++            vector[i] = fft_data_out[conj_idx].r * (rotations ? rotations[i].cosine : cos(temp)) - fft_data_out[conj_idx].i * (rotations ? rotations[i].sine : sin(temp));
+         }
+         ei_dsp_free(fft_data_in, fft_data_in_size);
+         ei_dsp_free(fft_data_out, fft_data_out_size);
+@@ -580,12 +603,12 @@
+      * @param N number of items in input and output array
+      * @returns EIDSP_OK if OK
+      */
+-    static int dct2(float *input, size_t N, DCT_NORMALIZATION_MODE normalization = DCT_NORMALIZATION_NONE) {
++    static int dct2(float *input, size_t N, DCT_NORMALIZATION_MODE normalization = DCT_NORMALIZATION_NONE, ReusableFFTPlan *plan = nullptr, const DCTRotation *rotations = nullptr) {
+         if (N == 0) {
+             return EIDSP_OK;
+         }
+ 
+-        int ret = dct_transform(input, N);
++        int ret = dct_transform(input, N, plan, rotations);
+         if (ret != EIDSP_OK) {
+             EIDSP_ERR(ret);
+         }
+@@ -611,13 +634,43 @@
+      * @returns EIDSP_OK if OK
+      */
+     static int dct2(matrix_t *matrix, DCT_NORMALIZATION_MODE normalization = DCT_NORMALIZATION_NONE) {
++        if (matrix->rows == 0 || matrix->cols == 0) return EIDSP_OK;
++        // Tablas locales: mismas funciones y redondeo del angulo que la ruta original.
++        DCTRotation *rotations;
++        auto rotations_owner = EI_MAKE_TRACKED_POINTER(rotations, matrix->cols);
++        if (!rotations) return EIDSP_OUT_OF_MEM;
++        const size_t len = matrix->cols;
++        for (size_t i = 0; i < len; ++i) {
++            float temp = i * M_PI / (len * 2);
++            rotations[i].cosine = cos(temp);
++            rotations[i].sine = sin(temp);
++        }
++        // Un plan local compartido por todas las filas. Se libera al retornar.
++        ReusableFFTPlan plan;
++#if WALLE_VERIFY_DCT
++        EI_DSP_MATRIX(reference, matrix->rows, matrix->cols);
++        if (!reference.buffer) return EIDSP_OUT_OF_MEM;
++        memcpy(reference.buffer, matrix->buffer, matrix->rows * matrix->cols * sizeof(float));
++#endif
+         for (size_t row = 0; row < matrix->rows; row++) {
+-            int r = dct2(matrix->buffer + (row * matrix->cols), matrix->cols, normalization);
+-            if (r != EIDSP_OK) {
+-                return r;
+-            }
+-        }
+-
++            int r = dct2(matrix->buffer + (row * matrix->cols), matrix->cols, normalization, &plan, rotations);
++            if (r != EIDSP_OK) return r;
++        }
++#if WALLE_VERIFY_DCT
++        // Verificacion temporal: ejecutar tambien la ruta anterior sobre una copia.
++        const uint32_t verify_start = walle_profile::now();
++        ReusableFFTPlan reference_plan;
++        for (size_t row = 0; row < reference.rows; row++) {
++            int r = dct2(reference.buffer + row * reference.cols, reference.cols, normalization, &reference_plan);
++            if (r != EIDSP_OK) return r;
++        }
++        auto &profile = walle_profile::stats();
++        profile.dct_verify_us += static_cast<uint32_t>(walle_profile::now() - verify_start);
++        profile.dct_verified = true;
++        profile.dct_equal = memcmp(reference.buffer, matrix->buffer, matrix->rows * matrix->cols * sizeof(float)) == 0;
++        // Ante cualquier diferencia, conservar el resultado de la ruta anterior.
++        if (!profile.dct_equal) memcpy(matrix->buffer, reference.buffer, matrix->rows * matrix->cols * sizeof(float));
++#endif
+         return EIDSP_OK;
+     }
+ 
+@@ -1067,6 +1120,7 @@
+ #else
+ 
+         for (size_t col = 0; col < input_matrix->cols; col++) {
++            walle_profile::Timer mean_timer(walle_profile::STD_MEAN);
+             float sum = 0.0f;
+ 
+             for (size_t row = 0; row < input_matrix->rows; row++) {
+@@ -1075,6 +1129,8 @@
+ 
+             float mean = sum / input_matrix->rows;
+ 
++            mean_timer.stop();
++            walle_profile::Timer sumsq_timer(walle_profile::STD_SUMSQ);
+             float std = 0.0f;
+             float tmp;
+             for (size_t row = 0; row < input_matrix->rows; row++) {
+@@ -1082,6 +1138,8 @@
+                 std += tmp * tmp;
+             }
+ 
++            sumsq_timer.stop();
++            walle_profile::Timer sqrt_timer(walle_profile::STD_SQRT);
+             output_matrix->buffer[col] = sqrt(std / input_matrix->rows);
+         }
+ 
+@@ -1324,21 +1382,24 @@
+      * @param output_size Size of the output buffer, should be n_fft / 2 + 1
+      * @returns 0 if OK
+      */
+-    static int rfft(const float *src, size_t src_size, float *output, size_t output_size, size_t n_fft) {
++    static int rfft(const float *src, size_t src_size, float *output, size_t output_size, size_t n_fft, ReusableFFTPlan *plan = nullptr) {
+         size_t n_fft_out_features = (n_fft / 2) + 1;
+         if (output_size != n_fft_out_features) {
+             EIDSP_ERR(EIDSP_BUFFER_SIZE_MISMATCH);
+         }
+ 
++        walle_profile::Timer output_timer(walle_profile::FFT_BUFFER);
+         fft_complex_t *fft_output = NULL;
+         auto ptr = EI_MAKE_TRACKED_POINTER(fft_output, n_fft_out_features);
+         EI_ERR_AND_RETURN_ON_NULL(fft_output, EIDSP_OUT_OF_MEM);
+ 
+-        int ret = rfft(src, src_size, fft_output, n_fft_out_features, n_fft);
++        output_timer.stop();
++        int ret = rfft(src, src_size, fft_output, n_fft_out_features, n_fft, plan);
+         if (ret != EIDSP_OK) {
+             return ret;
+         }
+ 
++        walle_profile::Timer magnitude_timer(walle_profile::FFT_MAG);
+         // Calculate magnitude from complex values
+         for (size_t ix = 0; ix < n_fft_out_features; ix++) {
+             output[ix] = sqrt(fft_output[ix].r * fft_output[ix].r + fft_output[ix].i * fft_output[ix].i);
+@@ -1357,7 +1418,8 @@
+      * @param output_size Size of the output buffer, should be n_fft / 2 + 1
+      * @returns 0 if OK
+      */
+-    static int rfft(const float *src, size_t src_size, fft_complex_t *output, size_t output_size, size_t n_fft) {
++    static int rfft(const float *src, size_t src_size, fft_complex_t *output, size_t output_size, size_t n_fft, ReusableFFTPlan *plan = nullptr) {
++        walle_profile::Timer input_timer(walle_profile::FFT_BUFFER);
+         size_t n_fft_out_features = (n_fft / 2) + 1;
+         if (output_size != n_fft_out_features) {
+             EIDSP_ERR(EIDSP_BUFFER_SIZE_MISMATCH);
+@@ -1381,10 +1443,11 @@
+         // pad to the rigth with zeros
+         memset(fft_input.buffer + src_size, 0, (n_fft - src_size) * sizeof(float));
+ 
++        input_timer.stop();
+         auto res = ei::fft::hw_r2c_fft(fft_input.buffer, output, n_fft);
+         if (handle_fft_hw_failure(res, n_fft)) {
+             // fallback to software
+-            return software_rfft(fft_input.buffer, output, n_fft, n_fft_out_features);
++            return software_rfft(fft_input.buffer, output, n_fft, n_fft_out_features, plan);
+         }
+ 
+         return EIDSP_OK;
+@@ -1784,23 +1847,41 @@
+         return EIDSP_OK;
+     }
+ 
+-    static int software_rfft(float *fft_input, fft_complex_t *output, size_t n_fft, size_t n_fft_out_features)
++    static int software_rfft(float *fft_input, fft_complex_t *output, size_t n_fft, size_t n_fft_out_features, ReusableFFTPlan *plan = nullptr)
+     {
+     #if EIDSP_INCLUDE_KISSFFT || !defined(EIDSP_INCLUDE_KISSFFT)
+-        // create fftr context
+-        size_t kiss_fftr_mem_length;
+-
+-        kiss_fftr_cfg cfg = kiss_fftr_alloc(n_fft, 0, NULL, NULL, &kiss_fftr_mem_length);
++        walle_profile::Timer plan_timer(walle_profile::FFT_PLAN);
++        size_t kiss_fftr_mem_length = 0;
++        // Si el tamaño cambia, descartar el plan anterior antes de reconstruirlo.
++        if (plan && plan->cfg && plan->points != n_fft) {
++            ei_dsp_free(plan->cfg, plan->bytes);
++            plan->cfg = nullptr;
++        }
++        kiss_fftr_cfg cfg = plan ? plan->cfg : nullptr;
+         if (!cfg) {
+-            EIDSP_ERR(EIDSP_OUT_OF_MEM);
+-        }
+-
+-        ei_dsp_register_alloc(kiss_fftr_mem_length, cfg);
+-
++            cfg = kiss_fftr_alloc(n_fft, 0, NULL, NULL, &kiss_fftr_mem_length);
++            if (!cfg) { EIDSP_ERR(EIDSP_OUT_OF_MEM); }
++            ei_dsp_register_alloc(kiss_fftr_mem_length, cfg);
++#if WALLE_PROFILE_MFCC
++            if (walle_profile::stats().in_power) ++walle_profile::stats().plans_built;
++#endif
++            if (plan) {
++                plan->cfg = cfg;
++                plan->points = n_fft;
++                plan->bytes = kiss_fftr_mem_length;
++            }
++        }
++        plan_timer.stop();
++#if WALLE_PROFILE_MFCC
++        if (walle_profile::stats().in_power) ++walle_profile::stats().fft_calls;
++#endif
++        walle_profile::Timer exec_timer(walle_profile::FFT_EXEC);
+         // execute the rfft operation
+         kiss_fftr(cfg, fft_input, (kiss_fft_cpx*)output);
+ 
+-        ei_dsp_free(cfg, kiss_fftr_mem_length);
++        exec_timer.stop();
++        walle_profile::Timer free_timer(walle_profile::FFT_FREE);
++        if (!plan) ei_dsp_free(cfg, kiss_fftr_mem_length);
+ 
+         return EIDSP_OK;
+     #else
+@@ -1843,17 +1924,25 @@
+         size_t frame_size,
+         float *out_buffer,
+         size_t out_buffer_size,
+-        uint16_t fft_points)
++        uint16_t fft_points, ReusableFFTPlan *plan = nullptr)
+     {
+         if (out_buffer_size != static_cast<size_t>(fft_points / 2 + 1)) {
+             EIDSP_ERR(EIDSP_MATRIX_SIZE_MISMATCH);
+         }
+ 
+-        int r = numpy::rfft(frame, frame_size, out_buffer, out_buffer_size, fft_points);
++        // Limitar los subcontadores al espectro: otras FFT (p. ej. DCT)
++        // no deben sumarse dentro de los tiempos de FFT + potencia.
++        struct PowerScope {
++            bool previous;
++            PowerScope() : previous(walle_profile::stats().in_power) { walle_profile::stats().in_power = true; }
++            ~PowerScope() { walle_profile::stats().in_power = previous; }
++        } power_scope;
++        int r = numpy::rfft(frame, frame_size, out_buffer, out_buffer_size, fft_points, plan);
+         if (r != EIDSP_OK) {
+             return r;
+         }
+ 
++        walle_profile::Timer power_timer(walle_profile::FFT_POWER);
+         for (size_t ix = 0; ix < out_buffer_size; ix++) {
+             out_buffer[ix] = (1.0 / static_cast<float>(fft_points)) *
+                 (out_buffer[ix] * out_buffer[ix]);
+--- a/edge-impulse-sdk/dsp/speechpy/processing.hpp
++++ b/edge-impulse-sdk/dsp/speechpy/processing.hpp
+@@ -404,6 +404,12 @@
+             return EIDSP_OK;
+         }
+ 
++        struct CMVNScope {
++            bool previous;
++            CMVNScope() : previous(walle_profile::stats().in_cmvn) { walle_profile::stats().in_cmvn = true; }
++            ~CMVNScope() { walle_profile::stats().in_cmvn = previous; }
++        } cmvn_scope;
++        walle_profile::Timer prep_timer(walle_profile::CMVN_PREP);
+         uint16_t pad_size = (win_size - 1) / 2;
+ 
+         int ret;
+@@ -415,11 +421,15 @@
+             EIDSP_ERR(EIDSP_OUT_OF_MEM);
+         }
+ 
++        prep_timer.stop();
++        walle_profile::Timer pad1_timer(walle_profile::CMVN_PAD1);
+         ret = numpy::pad_1d_symmetric(features_matrix, &vec_pad, pad_size, pad_size);
+         if (ret != EIDSP_OK) {
+             EIDSP_ERR(ret);
+         }
+ 
++        pad1_timer.stop();
++        walle_profile::Timer buffers_timer(walle_profile::CMVN_PREP);
+         EI_DSP_MATRIX(mean_matrix, vec_pad.cols, 1);
+         if (!mean_matrix.buffer) {
+             EIDSP_ERR(EIDSP_OUT_OF_MEM);
+@@ -430,6 +440,7 @@
+             return EIDSP_OUT_OF_MEM;
+         }
+ 
++        buffers_timer.stop();
+         for (size_t ix = 0; ix < features_matrix->rows; ix++) {
+             // create a slice on the vec_pad
+             EI_DSP_MATRIX_B(window, win_size, vec_pad.cols, vec_pad.buffer + (ix * vec_pad.cols));
+@@ -437,11 +448,14 @@
+                 EIDSP_ERR(EIDSP_OUT_OF_MEM);
+             }
+ 
++            walle_profile::Timer mean_timer(walle_profile::CMVN_MEAN);
+             ret = numpy::mean_axis0(&window, &mean_matrix);
+             if (ret != EIDSP_OK) {
+                 EIDSP_ERR(ret);
+             }
+ 
++            mean_timer.stop();
++            walle_profile::Timer sub_timer(walle_profile::CMVN_SUB);
+             // subtract the mean for the features
+             for (size_t fm_col = 0; fm_col < features_matrix->cols; fm_col++) {
+                 features_matrix->buffer[(ix * features_matrix->cols) + fm_col] =
+@@ -449,11 +463,13 @@
+             }
+         }
+ 
++        walle_profile::Timer pad2_timer(walle_profile::CMVN_PAD2);
+         ret = numpy::pad_1d_symmetric(features_matrix, &vec_pad, pad_size, pad_size);
+         if (ret != EIDSP_OK) {
+             EIDSP_ERR(ret);
+         }
+ 
++        pad2_timer.stop();
+         for (size_t ix = 0; ix < features_matrix->rows; ix++) {
+             // create a slice on the vec_pad
+             EI_DSP_MATRIX_B(window, win_size, vec_pad.cols, vec_pad.buffer + (ix * vec_pad.cols));
+@@ -462,11 +478,14 @@
+             }
+ 
+             if (variance_normalization == true) {
++                walle_profile::Timer std_timer(walle_profile::CMVN_STD);
+                 ret = numpy::std_axis0(&window, &window_variance);
+                 if (ret != EIDSP_OK) {
+                     EIDSP_ERR(ret);
+                 }
+ 
++                std_timer.stop();
++                walle_profile::Timer div_timer(walle_profile::CMVN_DIV);
+                 features_buffer_ptr = &features_matrix->buffer[ix * vec_pad.cols];
+                 for (size_t col = 0; col < vec_pad.cols; col++) {
+                     *(features_buffer_ptr) = (*(features_buffer_ptr)) /
+@@ -477,6 +496,7 @@
+         }
+ 
+         if (scale) {
++            walle_profile::Timer scale_timer(walle_profile::CMVN_SCALE);
+             ret = numpy::normalize(features_matrix);
+             if (ret != EIDSP_OK) {
+                 EIDSP_ERR(ret);
+--- a/edge-impulse-sdk/dsp/speechpy/feature.hpp
++++ b/edge-impulse-sdk/dsp/speechpy/feature.hpp
+@@ -32,6 +32,7 @@
+ #define _EIDSP_SPEECHPY_FEATURE_H_
+ 
+ #include <stdint.h>
++#include "../mfcc_profile.h"
+ #include "../../porting/ei_classifier_porting.h"
+ #include "../ei_utils.h"
+ #include "functions.hpp"
+@@ -221,6 +222,7 @@
+         uint16_t version
+         )
+     {
++        walle_profile::Timer prep_timer(walle_profile::MFE_PREP);
+         int ret = 0;
+ 
+         if (high_frequency == 0) {
+@@ -317,7 +319,40 @@
+         // get signal data from the audio file
+         EI_DSP_MATRIX(signal_frame, 1, stack_frame_info.frame_length);
+ 
++        // Pesos compactos en el mismo orden que el bucle original.
++        // Solo dependen de los bins, no del audio. Se liberan al salir de MFE.
++        size_t weight_count = 0;
++        for (size_t i = 0; i < num_filters; ++i) {
++            for (size_t bin = bins[i] + 1; bin < bins[i+2]; ++bin) {
++                if (bin != bins[i+1]) ++weight_count;
++            }
++        }
++        EI_DSP_MATRIX(mel_weights, 1, weight_count ? weight_count : 1);
++        if (!mel_weights.buffer) { EIDSP_ERR(EIDSP_OUT_OF_MEM); }
++        size_t weight_index = 0;
++        for (size_t i = 0; i < num_filters; ++i) {
++            size_t left = bins[i], middle = bins[i+1], right = bins[i+2];
++            for (size_t bin = left+1; bin < right; ++bin) {
++                if (bin < middle)
++                    mel_weights.buffer[weight_index++] = (static_cast<float>(bin) - left) / (middle - left);
++                if (bin > middle)
++                    mel_weights.buffer[weight_index++] = (right - static_cast<float>(bin)) / (right - middle);
++            }
++        }
++#if WALLE_VERIFY_MEL
++        EI_DSP_MATRIX(mel_reference, 1, num_filters);
++        if (!mel_reference.buffer) { EIDSP_ERR(EIDSP_OUT_OF_MEM); }
++#endif
++
++        // Un plan para todos los frames de esta ventana. Sin cache global.
++        numpy::ReusableFFTPlan fft_plan;
++        prep_timer.stop();
+         for (size_t ix = 0; ix < stack_frame_info.frame_ixs.size(); ix++) {
++#if WALLE_PROFILE_MFCC
++            ++walle_profile::stats().frames;
++#endif
++            // Incluye lectura desde flash y preénfasis aplicado por get_data.
++            walle_profile::Timer read_timer(walle_profile::READ);
+             // don't read outside of the audio buffer... we'll automatically zero pad then
+             size_t signal_offset = stack_frame_info.frame_ixs.at(ix);
+             size_t signal_length = stack_frame_info.frame_length;
+@@ -335,18 +370,23 @@
+                 EIDSP_ERR(ret);
+             }
+ 
++            read_timer.stop();
++            // FFT y conversión a espectro de potencia, sumadas para todos los frames.
++            walle_profile::Timer fft_timer(walle_profile::FFT);
+             ret = numpy::power_spectrum(
+                 signal_frame.buffer,
+                 stack_frame_info.frame_length,
+                 power_spectrum_frame.buffer,
+                 power_spectrum_frame_size,
+-                fft_length
++                fft_length, &fft_plan
+             );
+ 
+             if (ret != 0) {
+                 EIDSP_ERR(ret);
+             }
+ 
++            fft_timer.stop();
++            walle_profile::Timer mel_timer(walle_profile::MEL);
+             float energy = numpy::sum(power_spectrum_frame.buffer, power_spectrum_frame_size);
+             if (energy == 0) {
+                 energy = 1e-10;
+@@ -357,6 +397,19 @@
+             }
+ 
+             auto row_ptr = out_features->get_row_ptr(ix);
++            weight_index = 0;
++            for (size_t i = 0; i < num_filters; ++i) {
++                size_t left = bins[i], middle = bins[i+1], right = bins[i+2];
++                assert(right < power_spectrum_frame_size);
++                row_ptr[i] = power_spectrum_frame.buffer[middle];
++                for (size_t bin = left+1; bin < right; ++bin) {
++                    if (bin != middle) {
++                        row_ptr[i] += mel_weights.buffer[weight_index++] * power_spectrum_frame.buffer[bin];
++                    }
++                }
++            }
++#if WALLE_VERIFY_MEL
++            const uint32_t mel_verify_start = walle_profile::now();
+             for (size_t i = 0; i < num_filters; i++) {
+                 size_t left = bins[i];
+                 size_t middle = bins[i+1];
+@@ -368,22 +421,32 @@
+ 
+                 // middle always has weight of 1.0
+                 // since we skip left and right, if left = middle we need to handle that
+-                row_ptr[i] = power_spectrum_frame.buffer[middle];
++                mel_reference.buffer[i] = power_spectrum_frame.buffer[middle];
+ 
+                 for (size_t bin = left+1; bin < right; bin++) {
+                     if (bin < middle) {
+-                        row_ptr[i] +=
++                        mel_reference.buffer[i] +=
+                             ((static_cast<float>(bin) - left) / (middle - left)) * // weight *
+                             power_spectrum_frame.buffer[bin];
+                     }
+                     // intentionally skip middle, handled above
+                     if (bin > middle) {
+-                        row_ptr[i] +=
++                        mel_reference.buffer[i] +=
+                             ((right - static_cast<float>(bin)) / (right - middle)) * // weight *
+                             power_spectrum_frame.buffer[bin];
+                     }
+                 }
+             }
++
++            auto &mel_stats = walle_profile::stats();
++            ++mel_stats.mel_verified_frames;
++            if (memcmp(row_ptr, mel_reference.buffer, num_filters * sizeof(float)) != 0) {
++                ++mel_stats.mel_different_frames;
++                // Conservamos la salida original si aparece cualquier diferencia.
++                memcpy(row_ptr, mel_reference.buffer, num_filters * sizeof(float));
++            }
++            mel_stats.mel_verify_us += static_cast<uint32_t>(walle_profile::now() - mel_verify_start);
++#endif
+ 
+             if (ret != 0) {
+                 EIDSP_ERR(ret);
+@@ -757,17 +820,22 @@
+ 
+         // ok... now we need to calculate the MFCC from this...
+         // first do log() over all features...
++        walle_profile::Timer log_timer(walle_profile::LOG);
+         ret = numpy::log(&features_matrix);
++        log_timer.stop();
+         if (ret != EIDSP_OK) {
+             EIDSP_ERR(ret);
+         }
+ 
+         // now do DST type 2
++        walle_profile::Timer dct_timer(walle_profile::DCT);
+         ret = numpy::dct2(&features_matrix, DCT_NORMALIZATION_ORTHO);
++        dct_timer.stop();
+         if (ret != EIDSP_OK) {
+             EIDSP_ERR(ret);
+         }
+ 
++        walle_profile::Timer copy_timer(walle_profile::COPY);
+         // replace first cepstral coefficient with log of frame energy for DC elimination
+         if (dc_elimination) {
+             for (size_t row = 0; row < features_matrix.rows; row++) {

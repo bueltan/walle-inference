@@ -1,0 +1,62 @@
+Processing esp32-c3-clips (platform: espressif32; board: esp32-c3-devkitm-1; framework: arduino)
+--------------------------------------------------------------------------------
+Verbose mode can be enabled via `-v, --verbose` option
+CONFIGURATION: https://docs.platformio.org/page/boards/espressif32/esp32-c3-devkitm-1.html
+PLATFORM: Espressif 32 (6.13.0) > Espressif ESP32-C3-DevKitM-1
+HARDWARE: ESP32C3 160MHz, 320KB RAM, 4MB Flash
+DEBUG: Current (cmsis-dap) External (cmsis-dap, esp-bridge, esp-builtin, esp-prog, iot-bus-jtag, jlink, minimodule, olimex-arm-usb-ocd, olimex-arm-usb-ocd-h, olimex-arm-usb-tiny-h, olimex-jtag-tiny, tumpa)
+PACKAGES: 
+ - framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b 
+ - tool-esptoolpy @ 2.41100.0 (4.11.0) 
+ - toolchain-riscv32-esp @ 8.4.0+2021r2-patch5
+LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
+LDF Modes: Finder ~ chain, Compatibility ~ soft
+Found 34 compatible libraries
+Scanning dependencies...
+Dependency Graph
+|-- wall_e_model @ 1.0.0
+Building in release mode
+Compiling .pio/build/esp32-c3-clips/src/main.cpp.o
+Compiling .pio/build/esp32-c3-clips/src/real_audio_test.cpp.o
+Compiling .pio/build/esp32-c3-clips/src/stream_test.cpp.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/all_ops_resolver.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/kernels/add.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/kernels/conv.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/kernels/depthwise_conv.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/kernels/fully_connected.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/kernels/kernel_runner.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/kernels/mli_interface.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/kernels/mli_slicers.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/kernels/mul.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/kernels/pooling.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/kernels/scratch_buf_mgr.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/kernels/scratch_buffers.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/kernels/softmax.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/kernels/softmax_common.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/kernels/svdf.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/kernels/transpose_conv.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/mock_micro_graph.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/test_helper_custom_ops.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/edge-impulse-sdk/tensorflow/lite/micro/test_helpers.cc.o
+Compiling .pio/build/esp32-c3-clips/lib776/wall_e_model/tflite-model/tflite_learn_1124860_5_compiled.cpp.o
+Archiving .pio/build/esp32-c3-clips/lib776/libwall_e_model.a
+Indexing .pio/build/esp32-c3-clips/lib776/libwall_e_model.a
+Linking .pio/build/esp32-c3-clips/firmware.elf
+Retrieving maximum program size .pio/build/esp32-c3-clips/firmware.elf
+Checking size .pio/build/esp32-c3-clips/firmware.elf
+Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
+RAM:   [=         ]   5.3% (used 17284 bytes from 327680 bytes)
+Flash: [======    ]  55.9% (used 732562 bytes from 1310720 bytes)
+Building .pio/build/esp32-c3-clips/firmware.bin with action:
+  "$PYTHONEXE" "$OBJCOPY" --chip esp32c3 elf2image --flash_mode ${__get_board_flash_mode(__env__)} --flash_freq ${__get_board_f_image(__env__)} --flash_size 4MB --elf-sha256-offset 0xb0 -o $TARGET $SOURCES
+Building .pio/build/esp32-c3-clips/firmware.bin
+esptool.py v4.11.0
+Creating esp32c3 image...
+Merged 2 ELF sections
+Successfully created esp32c3 image.
+========================= [SUCCESS] Took 16.25 seconds =========================
+
+Environment     Status    Duration
+--------------  --------  ------------
+esp32-c3-clips  SUCCESS   00:00:16.254
+========================= 1 succeeded in 00:00:16.254 =========================

@@ -1,0 +1,17 @@
+{
+  "name": "wall_e_model",
+  "version": "1.0.0",
+  "build": {
+    "srcDir": ".",
+    "includeDir": ".",
+    "srcFilter": [
+      "+<tflite-model/*.cpp>",
+      "+<edge-impulse-sdk/dsp/*.cpp>",
+      "+<edge-impulse-sdk/dsp/kissfft/*.cpp>",
+      "+<edge-impulse-sdk/dsp/kissfft/*.c>",
+      "+<edge-impulse-sdk/porting/arduino/*.cpp>",
+      "+<edge-impulse-sdk/tensorflow/lite/**/*.cc>",
+      "+<edge-impulse-sdk/tensorflow/lite/**/*.c>"
+    ]
+  }
+}
